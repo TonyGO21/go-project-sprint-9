@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-// Generator генерирует последовательность чисел 1,2,3 и т.д.
 func Generator(ctx context.Context, ch chan<- int64, fn func(int64)) {
 	defer close(ch)
 	var i int64 = 1
@@ -23,46 +22,38 @@ func Generator(ctx context.Context, ch chan<- int64, fn func(int64)) {
 	}
 }
 
-// Worker читает число из канала in и пишет его в канал out.
-func Worker(ctx context.Context, in <-chan int64, out chan<- int64) {
+func Worker(in <-chan int64, out chan<- int64) {
 	defer close(out)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case num, ok := <-in:
-			if !ok {
-				return
-			}
-			out <- num
-		}
+	for num := range in {
+		out <- num
 	}
 }
 
 func main() {
 	chIn := make(chan int64)
 
-	// Создание контекста с таймаутом
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	var inputSum int64
 	var inputCount int64
+	var mu sync.Mutex // Мьют для синхронизации
 
 	// Генератор чисел
 	go Generator(ctx, chIn, func(i int64) {
-		inputSum += i
-		inputCount++
+		mu.Lock()     // Блокировка мью
+		inputSum += i // Увеличение inputSum
+		inputCount++  // Увеличение inputCount
+		mu.Unlock()   // Освобождение мью
 	})
 
 	const NumOut = 5
 	outs := make([]chan int64, NumOut)
 	for i := 0; i < NumOut; i++ {
 		outs[i] = make(chan int64)
-		go Worker(ctx, chIn, outs[i])
+		go Worker(chIn, outs[i])
 	}
 
-	// Собираем числа из каналов outs
 	amounts := make([]int64, NumOut)
 	chOut := make(chan int64, NumOut)
 
@@ -73,7 +64,7 @@ func main() {
 			defer wg.Done()
 			for num := range outs[i] {
 				chOut <- num
-				amounts[i]++
+				amounts[i]++ // Увеличение разбивки по каналам
 			}
 		}(i)
 	}
@@ -86,15 +77,16 @@ func main() {
 	var count int64
 	var sum int64
 
-	// Чтение данных из результирующего канала
 	for num := range chOut {
 		sum += num
 		count++
 	}
 
+	mu.Lock() // Блокировка мью перед чтением
 	fmt.Println("Количество чисел", inputCount, count)
 	fmt.Println("Сумма чисел", inputSum, sum)
 	fmt.Println("Разбивка по каналам", amounts)
+	mu.Unlock() // Освобождение мью после чтения
 
 	if inputSum != sum {
 		log.Fatalf("Ошибка: суммы чисел не равны: %d != %d\n", inputSum, sum)
@@ -102,10 +94,17 @@ func main() {
 	if inputCount != count {
 		log.Fatalf("Ошибка: количество чисел не равно: %d != %d\n", inputCount, count)
 	}
+
 	for _, v := range amounts {
+		mu.Lock() // Блокировка мью для изменения
 		inputCount -= v
+		mu.Unlock() // Освобождение мью
+
 	}
+
+	mu.Lock() // Блокировка мью перед финальной проверкой
 	if inputCount != 0 {
 		log.Fatalf("Ошибка: разделение чисел по каналам неверное\n")
 	}
+	mu.Unlock() // Освобождение мью
 }
