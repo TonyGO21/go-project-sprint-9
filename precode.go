@@ -24,8 +24,13 @@ func Generator(ctx context.Context, ch chan<- int64, fn func(int64)) {
 
 func Worker(in <-chan int64, out chan<- int64) {
 	defer close(out)
-	for num := range in {
-		out <- num
+	for {
+		num, ok := <-in // Считываем данные из канала
+		if !ok {        // Если канал закрыт, выходим из цикла
+			break
+		}
+		out <- num                       // Отправляем число в канал out
+		time.Sleep(1 * time.Millisecond) // Делаем паузу на 1 миллисекунду
 	}
 }
 
@@ -82,11 +87,9 @@ func main() {
 		count++
 	}
 
-	mu.Lock() // Блокировка мью перед чтением
 	fmt.Println("Количество чисел", inputCount, count)
 	fmt.Println("Сумма чисел", inputSum, sum)
 	fmt.Println("Разбивка по каналам", amounts)
-	mu.Unlock() // Освобождение мью после чтения
 
 	if inputSum != sum {
 		log.Fatalf("Ошибка: суммы чисел не равны: %d != %d\n", inputSum, sum)
@@ -96,15 +99,11 @@ func main() {
 	}
 
 	for _, v := range amounts {
-		mu.Lock() // Блокировка мью для изменения
 		inputCount -= v
-		mu.Unlock() // Освобождение мью
 
 	}
 
-	mu.Lock() // Блокировка мью перед финальной проверкой
 	if inputCount != 0 {
 		log.Fatalf("Ошибка: разделение чисел по каналам неверное\n")
 	}
-	mu.Unlock() // Освобождение мью
 }
